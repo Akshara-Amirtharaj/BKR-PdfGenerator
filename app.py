@@ -16,7 +16,8 @@ port = int(os.environ.get("PORT", 8501))
 
 # Initialize Google Cloud Storage client
 
-SERVICE_ACCOUNT_KEY = "bkr-support-services-88c7debfd9d2.json"
+SERVICE_ACCOUNT_KEY = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+
 
 # Initialize the Google Cloud Storage client with explicit credentials
 storage_client = storage.Client.from_service_account_json(SERVICE_ACCOUNT_KEY)
