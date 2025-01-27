@@ -9,6 +9,7 @@ import subprocess
 from PyPDF2 import PdfReader, PdfWriter
 from PIL import Image
 import fitz  #
+import tempfile
 
 port = int(os.environ.get("PORT", 8501))
 # Path to the text file for storing base number and counter
@@ -102,7 +103,6 @@ def replace_placeholders(doc, placeholders):
     return doc
   
 
-
 def convert_to_pdf(doc_path, pdf_path):
     doc_path = os.path.abspath(doc_path)
     pdf_path = os.path.abspath(pdf_path)
@@ -110,65 +110,65 @@ def convert_to_pdf(doc_path, pdf_path):
     if not os.path.exists(doc_path):
         raise FileNotFoundError(f"Word document not found at {doc_path}")
 
-    temp_pdf_path = os.path.join(os.path.dirname(pdf_path), "temp_output.pdf")
+    # Use a temporary directory for the intermediate PDF file
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_pdf_path = os.path.join(temp_dir, "temp_output.pdf")
 
-    # Step 1: Convert Word to PDF (original implementation)
-    if platform.system() == "Windows":
-        try:
-            import comtypes.client
-            import pythoncom
-            pythoncom.CoInitialize()
-            word = comtypes.client.CreateObject("Word.Application")
-            word.Visible = False
-            doc = word.Documents.Open(doc_path)
-            doc.SaveAs(temp_pdf_path, FileFormat=17)
-            doc.Close()
-            word.Quit()
-        except Exception as e:
-            raise Exception(f"Error using COM on Windows: {e}")
-    else:
-        try:
-            subprocess.run(
-                ['libreoffice', '--headless', '--convert-to', 'pdf', '--outdir', os.path.dirname(temp_pdf_path), doc_path],
-                check=True
-            )
-        except subprocess.CalledProcessError as e:
-            raise Exception(f"Error using LibreOffice: {e}")
+        # Step 1: Convert Word to PDF
+        if platform.system() == "Windows":
+            try:
+                import comtypes.client
+                import pythoncom
+                pythoncom.CoInitialize()
+                word = comtypes.client.CreateObject("Word.Application")
+                word.Visible = False
+                doc = word.Documents.Open(doc_path)
+                doc.SaveAs(temp_pdf_path, FileFormat=17)  # FileFormat=17 is for PDF
+                doc.Close()
+                word.Quit()
+            except Exception as e:
+                raise Exception(f"Error using COM on Windows: {e}")
+        else:
+            try:
+                subprocess.run(
+                    ['libreoffice', '--headless', '--convert-to', 'pdf', '--outdir', temp_dir, doc_path],
+                    check=True
+                )
+            except subprocess.CalledProcessError as e:
+                raise Exception(f"Error using LibreOffice: {e}")
 
-    # Step 2: Flatten the PDF (convert to image-based PDF)
-    flatten_pdf(temp_pdf_path, pdf_path)
-
-    # Clean up temporary file
-    if os.path.exists(temp_pdf_path):
-        os.remove(temp_pdf_path)
+        # Step 2: Flatten the PDF (convert to image-based PDF)
+        flatten_pdf(temp_pdf_path, pdf_path)
 
 def flatten_pdf(input_pdf_path, output_pdf_path):
     """
     Converts each page of a PDF into an image and re-embeds it to create a flattened, non-editable PDF.
     """
+    if not os.path.exists(input_pdf_path):
+        raise FileNotFoundError(f"Input PDF file not found: {input_pdf_path}")
+
     doc = fitz.open(input_pdf_path)  # Open the original PDF
     writer = PdfWriter()
 
-    for page_num in range(len(doc)):
-        page = doc.load_page(page_num)
-        pix = page.get_pixmap(dpi=300)  # Render page to an image with 300 DPI
-        image = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+    with tempfile.TemporaryDirectory() as temp_dir:
+        for page_num in range(len(doc)):
+            page = doc.load_page(page_num)
+            pix = page.get_pixmap(dpi=300)  # Render page to an image with 300 DPI
+            image = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
 
-        # Convert image to a PDF page
-        img_byte_arr = image.convert("RGB")
-        img_byte_arr.save(f"temp_page_{page_num}.pdf", "PDF")
-        reader = PdfReader(f"temp_page_{page_num}.pdf")
-        writer.add_page(reader.pages[0])
+            # Save the image as a temporary PDF
+            temp_page_path = os.path.join(temp_dir, f"temp_page_{page_num}.pdf")
+            image.save(temp_page_path, "PDF")
 
-        # Clean up temporary image file
-        os.remove(f"temp_page_{page_num}.pdf")
+            # Read the temporary PDF and add it to the writer
+            reader = PdfReader(temp_page_path)
+            writer.add_page(reader.pages[0])
 
     # Save the flattened PDF
     with open(output_pdf_path, "wb") as f:
         writer.write(f)
 
     print(f"Flattened PDF saved at: {output_pdf_path}")
-
 
 def options_changed():
     if "current_input" not in st.session_state:
