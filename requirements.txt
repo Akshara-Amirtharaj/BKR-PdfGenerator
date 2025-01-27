@@ -2,7 +2,4 @@ streamlit
 python-docx
 comtypes; platform_system == "Windows"
 pythoncom; platform_system == "Windows"
-Pillow
-PyPDF2
-pymupdf
-google-cloud-storage
+

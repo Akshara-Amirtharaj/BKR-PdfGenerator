@@ -6,51 +6,24 @@ from datetime import datetime
 import os
 import platform
 import subprocess
-from google.cloud import storage
-from PyPDF2 import PdfReader, PdfWriter
-from PIL import Image
-import fitz  # PyMuPDF
-
 
 port = int(os.environ.get("PORT", 8501))
-
-# Initialize Google Cloud Storage client
-
-SERVICE_ACCOUNT_KEY = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
-
-
-# Initialize the Google Cloud Storage client with explicit credentials
-storage_client = storage.Client.from_service_account_json(SERVICE_ACCOUNT_KEY)
-BUCKET_NAME = "bkr-pdfgenerator-bucket"
+# Path to the text file for storing base number and counter
 SERIAL_FILE = "serial_data.txt"
 
-def read_serial_file():
-    bucket = storage_client.bucket(BUCKET_NAME)
-    blob = bucket.blob(SERIAL_FILE)
-    if not blob.exists():
-        # If file doesn't exist, create it with default values
-        blob.upload_from_string("701,0")
-    return blob.download_as_text()
-
-def write_serial_file(data):
-    bucket = storage_client.bucket(BUCKET_NAME)
-    blob = bucket.blob(SERIAL_FILE)
-    blob.upload_from_string(data)
-
 def get_serial_number():
-    # Read base number and counter from file in the bucket
-    file_content = read_serial_file()
-    base_number, counter = map(int, file_content.strip().split(","))
+    # Read base number and counter from file
+    with open(SERIAL_FILE, "r") as f:
+        base_number, counter = map(int, f.read().strip().split(","))
 
     # Calculate current serial number
     serial_number = base_number + counter
 
-    # Increment the counter and update the file in the bucket
-    updated_content = f"{base_number},{counter + 1}"
-    write_serial_file(updated_content)
+    # Increment the counter and update the file
+    with open(SERIAL_FILE, "w") as f:
+        f.write(f"{base_number},{counter + 1}")
 
     return serial_number
-
 
 def generate_reference_number(company_name="BKR"):
     """
@@ -126,6 +99,7 @@ def replace_placeholders(doc, placeholders):
     return doc
   
 
+
 def convert_to_pdf(doc_path, pdf_path):
     doc_path = os.path.abspath(doc_path)
     pdf_path = os.path.abspath(pdf_path)
@@ -133,9 +107,6 @@ def convert_to_pdf(doc_path, pdf_path):
     if not os.path.exists(doc_path):
         raise FileNotFoundError(f"Word document not found at {doc_path}")
 
-    temp_pdf_path = os.path.join(os.path.dirname(pdf_path), "temp_output.pdf")
-
-    # Step 1: Convert Word to PDF (original implementation)
     if platform.system() == "Windows":
         try:
             import comtypes.client
@@ -144,7 +115,7 @@ def convert_to_pdf(doc_path, pdf_path):
             word = comtypes.client.CreateObject("Word.Application")
             word.Visible = False
             doc = word.Documents.Open(doc_path)
-            doc.SaveAs(temp_pdf_path, FileFormat=17)
+            doc.SaveAs(pdf_path, FileFormat=17)
             doc.Close()
             word.Quit()
         except Exception as e:
@@ -152,46 +123,11 @@ def convert_to_pdf(doc_path, pdf_path):
     else:
         try:
             subprocess.run(
-                ['libreoffice', '--headless', '--convert-to', 'pdf', '--outdir', os.path.dirname(temp_pdf_path), doc_path],
+                ['libreoffice', '--headless', '--convert-to', 'pdf', '--outdir', os.path.dirname(pdf_path), doc_path],
                 check=True
             )
         except subprocess.CalledProcessError as e:
             raise Exception(f"Error using LibreOffice: {e}")
-
-    # Step 2: Flatten the PDF (convert to image-based PDF)
-    flatten_pdf(temp_pdf_path, pdf_path)
-
-    # Clean up temporary file
-    if os.path.exists(temp_pdf_path):
-        os.remove(temp_pdf_path)
-
-def flatten_pdf(input_pdf_path, output_pdf_path):
-    """
-    Converts each page of a PDF into an image and re-embeds it to create a flattened, non-editable PDF.
-    """
-    doc = fitz.open(input_pdf_path)  # Open the original PDF
-    writer = PdfWriter()
-
-    for page_num in range(len(doc)):
-        page = doc.load_page(page_num)
-        pix = page.get_pixmap(dpi=300)  # Render page to an image with 300 DPI
-        image = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-
-        # Convert image to a PDF page
-        img_byte_arr = image.convert("RGB")
-        img_byte_arr.save(f"temp_page_{page_num}.pdf", "PDF")
-        reader = PdfReader(f"temp_page_{page_num}.pdf")
-        writer.add_page(reader.pages[0])
-
-        # Clean up temporary image file
-        os.remove(f"temp_page_{page_num}.pdf")
-
-    # Save the flattened PDF
-    with open(output_pdf_path, "wb") as f:
-        writer.write(f)
-
-    print(f"Flattened PDF saved at: {output_pdf_path}")
-
 
 def options_changed():
     if "current_input" not in st.session_state:
